@@ -193,6 +193,7 @@ class Trabajador(threading.Thread):
         self.eventos.put(("login_ok",))
 
     def _listar(self, fuera_de_tramite):
+        self.pjn.volver_a_invisible()
         self.avisar("Buscando sus expedientes…")
         lista = self.pjn.listar_mis_expedientes(fuera_de_tramite)
         self.eventos.put(("lista", lista))
@@ -201,7 +202,11 @@ class Trabajador(threading.Thread):
         self.avisar(f"Buscando {numero}…")
         for intento in range(2):
             try:
-                datos = self.pjn.consultar(numero)
+                try:
+                    datos = self.pjn.consultar(numero)
+                except pjn_core.NecesitaVerificacion:
+                    self.eventos.put(("verificacion",))
+                    datos = self.pjn.consultar_con_verificacion(numero)
                 break
             except pjn_core.SesionVencida:
                 if not self.credenciales or intento == 1:
@@ -213,11 +218,25 @@ class Trabajador(threading.Thread):
     def _descargar(self, numero, destino, vinculados, solo_consulta=False):
         # Si el PJN se cuelga o vence la sesión, se reintenta: lo ya bajado no se repite.
         intentos = 4
+        if solo_consulta and getattr(self.pjn, "_oculto", None):
+            self.avisar("No cierre la ventana del PJN mientras se descarga.")
+        try:
+            self._descargar_con_reintentos(numero, destino, vinculados, solo_consulta, intentos)
+        finally:
+            if solo_consulta:
+                self.pjn.volver_a_invisible()
+
+    def _descargar_con_reintentos(self, numero, destino, vinculados, solo_consulta, intentos):
         for intento in range(1, intentos + 1):
             try:
                 carpeta, docs, errores = self.pjn.descargar_expediente(
                     numero, destino, vinculados, solo_consulta)
                 break
+            except pjn_core.NecesitaVerificacion:
+                if intento == intentos:
+                    raise RuntimeError("El PJN pide el verificador y no se completó.")
+                self.eventos.put(("verificacion",))
+                self.pjn.consultar_con_verificacion(numero)
             except pjn_core.SesionVencida:
                 if not self.credenciales or intento == intentos:
                     raise
@@ -304,7 +323,9 @@ class App:
         root.title(f"Expedientes PJN — versión {VERSION}")
         root.configure(fg_color=C_FONDO)
         root.geometry("1180x760")
-        root.minsize(940, 640)
+        root.minsize(900, 600)
+        if sys.platform == "win32":
+            root.after(50, lambda: root.state("zoomed"))  # maximizada
         if sys.platform == "win32":  # customtkinter pone su ícono a los 200 ms: el nuestro va después
             root.after(300, lambda: self._poner_icono())
         self._estilo_tabla()
@@ -496,13 +517,16 @@ class App:
 
     def _armar_consulta(self, padre):
         sec = tarjeta(padre)
-        f = ctk.CTkFrame(sec, fg_color="transparent")
-        f.pack(fill="both", expand=True, padx=32, pady=22)
+        # Se puede desplazar: con letra grande o ventana chica no queda nada tapado.
+        f = self.consulta_scroll = ctk.CTkScrollableFrame(sec, fg_color="transparent",
+                                                          scrollbar_button_color="#C9CDE0",
+                                                          scrollbar_button_hover_color="#AEB3CC")
+        f.pack(fill="both", expand=True, padx=(24, 8), pady=10)
         ctk.CTkLabel(f, text="Consultar cualquier causa", font=fuente(20, "bold"),
                      text_color=C_TEXTO, anchor="w").pack(fill="x")
         ctk.CTkLabel(f, text="Sirve para causas que no son suyas. Elija la jurisdicción, escriba número y año, "
                              "y apriete «Buscar».", font=fuente(14), text_color=C_SUAVE,
-                     anchor="w").pack(fill="x", pady=(2, 22))
+                     anchor="w").pack(fill="x", pady=(2, 14))
 
         ctk.CTkLabel(f, text="Jurisdicción", font=fuente(13, "bold"), text_color=C_TEXTO,
                      anchor="w").pack(fill="x")
@@ -534,18 +558,28 @@ class App:
         self.e_num.bind("<Return>", lambda e: self.e_anio.focus_set())
         self.e_anio.bind("<Return>", lambda e: self.buscar_causa())
 
+        # Resultado: datos a la izquierda y el botón a la derecha (así nunca queda tapado).
         self.res = ctk.CTkFrame(f, fg_color=C_OK_FONDO, corner_radius=12)
-        self.lbl_res_titulo = ctk.CTkLabel(self.res, text="", font=fuente(15, "bold"), anchor="w",
+        self.res.grid_columnconfigure(0, weight=1)
+        info = ctk.CTkFrame(self.res, fg_color="transparent")
+        info.grid(row=0, column=0, sticky="nsew", padx=(18, 8), pady=12)
+        self.lbl_res_titulo = ctk.CTkLabel(info, text="", font=fuente(15, "bold"), anchor="w",
                                            justify="left", text_color=C_OK_TEXTO)
-        self.lbl_res_titulo.pack(fill="x", padx=18, pady=(14, 2))
-        self.lbl_res_caratula = ctk.CTkLabel(self.res, text="", font=fuente(14), anchor="w", justify="left",
-                                             text_color=C_TEXTO, wraplength=820)
-        self.lbl_res_caratula.pack(fill="x", padx=18)
-        self.lbl_res_detalle = ctk.CTkLabel(self.res, text="", font=fuente(13), anchor="w", justify="left",
-                                            text_color=C_SUAVE, wraplength=820)
-        self.lbl_res_detalle.pack(fill="x", padx=18, pady=(2, 12))
-        self.btn_descargar_otra = boton(self.res, "Descargar esta causa", self.descargar_otra, width=260)
-        self.btn_descargar_otra.pack(anchor="w", padx=18, pady=(0, 16))
+        self.lbl_res_titulo.pack(fill="x")
+        self.lbl_res_caratula = ctk.CTkLabel(info, text="", font=fuente(14), anchor="w", justify="left",
+                                             text_color=C_TEXTO, wraplength=620)
+        self.lbl_res_caratula.pack(fill="x")
+        self.lbl_res_detalle = ctk.CTkLabel(info, text="", font=fuente(13), anchor="w", justify="left",
+                                            text_color=C_SUAVE, wraplength=620)
+        self.lbl_res_detalle.pack(fill="x")
+
+        def ajustar_ancho(e):  # el texto largo baja de renglón en vez de cortarse
+            ancho = max(200, int(e.width / ctk.ScalingTracker.get_widget_scaling(info)) - 10)
+            self.lbl_res_caratula.configure(wraplength=ancho)
+            self.lbl_res_detalle.configure(wraplength=ancho)
+        info.bind("<Configure>", ajustar_ancho)
+        self.btn_descargar_otra = boton(self.res, "Descargar esta causa", self.descargar_otra, width=230)
+        self.btn_descargar_otra.grid(row=0, column=1, sticky="e", padx=18, pady=12)
         return sec
 
     def _armar_pie(self, m):
@@ -578,9 +612,23 @@ class App:
         self.var_destino = tk.StringVar(
             value=self.cfg.get("destino") or str(carpeta_documentos() / "Expedientes PJN"))
         boton(fila2, "Cambiar…", self.elegir_destino, principal=False, width=90, height=30).pack(side="right")
-        ctk.CTkLabel(fila2, textvariable=self.var_destino, font=fuente(13), text_color=C_SUAVE).pack(
-            side="right", padx=8)
+        self.lbl_destino = ctk.CTkLabel(fila2, text="", font=fuente(13), text_color=C_SUAVE)
+        self.lbl_destino.pack(side="right", padx=8)
+        self.var_destino.trace_add("write", lambda *a: self._mostrar_destino())
+        self._mostrar_destino()
         ctk.CTkLabel(fila2, text="Se guarda en:", font=fuente(13, "bold"), text_color=C_TEXTO).pack(side="right")
+
+    def _bajar_hasta_resultado(self):
+        try:
+            self.consulta_scroll._parent_canvas.yview_moveto(1.0)
+        except Exception:
+            pass
+
+    def _mostrar_destino(self):
+        """Muestra la carpeta de destino abreviada (las dos últimas partes) para que no se pise."""
+        partes = Path(self.var_destino.get()).parts
+        corto = str(Path(*partes[-2:])) if len(partes) > 2 else self.var_destino.get()
+        self.lbl_destino.configure(text=("…" + os.sep + corto) if len(partes) > 2 else corto)
 
     def mostrar_lista(self):
         if not getattr(self, "tree", None) or not self.tree.winfo_exists():
@@ -787,6 +835,10 @@ class App:
         self.mostrar_lista()
         self.estado("Elija una causa de la lista y apriete «Descargar la causa elegida».")
 
+    def ev_verificacion(self):
+        self.estado("Se abrió una ventana del PJN con la causa ya cargada. Complete el verificador "
+                    "(el cuadro de verificación) y apriete «Consultar». Después el programa sigue solo.")
+
     def ev_consulta(self, numero, datos):
         self.causa_encontrada = (numero, datos)
         self.set_ocupado(False)
@@ -794,7 +846,8 @@ class App:
         self.lbl_res_caratula.configure(text=datos.get("Carátula", ""))
         detalle = "   ·   ".join(x for x in (datos.get("Dependencia", ""), datos.get("Sit. Actual", "")) if x)
         self.lbl_res_detalle.configure(text=detalle)
-        self.res.pack(fill="x", pady=(20, 0))
+        self.res.pack(fill="x", pady=(16, 0))
+        self.root.after(150, self._bajar_hasta_resultado)
         self.estado("Si es la causa correcta, apriete «Descargar esta causa».")
 
     def ev_descarga_ok(self, carpeta, docs, errores):

@@ -148,6 +148,10 @@ class SesionVencida(Exception):
     pass
 
 
+class NecesitaVerificacion(Exception):
+    """La Consulta pública del PJN pide completar el verificador (captcha)."""
+
+
 class SinPermiso(Exception):
     """El PJN no deja ver ese documento con esta cuenta."""
 
@@ -200,23 +204,34 @@ class PJN:
 
     # --- ciclo de vida
 
-    def abrir_navegador(self):
-        self._pw = sync_playwright().start()
-        opciones = dict(headless=not self.visible)
-        self.browser = None
+    def _lanzar(self, visible):
+        opciones = dict(headless=not visible)
+        browser = None
         if sys.platform == "win32":
             try:  # Edge viene con Windows: no hace falta bajar Chromium
-                self.browser = self._pw.chromium.launch(channel="msedge", **opciones)
+                browser = self._pw.chromium.launch(channel="msedge", **opciones)
             except Exception:
-                self.browser = None
-        if self.browser is None:
-            self.browser = self._pw.chromium.launch(**opciones)
-        self.ctx = self.browser.new_context(user_agent=USER_AGENT, viewport={"width": 1280, "height": 900},
-                                            locale="es-AR")
-        self.page = self.ctx.new_page()
-        self.page.set_default_timeout(90000)
+                browser = None
+        if browser is None:
+            browser = self._pw.chromium.launch(**opciones)
+        ctx = browser.new_context(user_agent=USER_AGENT, viewport={"width": 1280, "height": 900}, locale="es-AR")
+        page = ctx.new_page()
+        page.set_default_timeout(90000)
+        return browser, ctx, page
+
+    def abrir_navegador(self):
+        self._pw = sync_playwright().start()
+        self.browser, self.ctx, self.page = self._lanzar(self.visible)
+        self._oculto = None  # navegador invisible guardado mientras se usa uno visible
 
     def cerrar(self):
+        if getattr(self, "_oculto", None):
+            for cosa in self._oculto[:2]:
+                try:
+                    cosa.close()
+                except Exception:
+                    pass
+            self._oculto = None
         for cosa in (self.ctx, self.browser):
             try:
                 if cosa:
@@ -336,6 +351,11 @@ class PJN:
         Consulta pública (sirve para cualquier causa, no solo las propias)."""
         sigla, num, anio, sufijo = parsear_expediente(numero)
         objetivo = normalizar_nro(numero)
+        # Solo con la ventana del verificador: la causa ya está abierta ahí y volver a buscarla
+        # pediría el verificador otra vez.
+        if getattr(self, "_oculto", None) is not None and self._expediente_en_pantalla() == objetivo:
+            self._volver_a_actuaciones()
+            return
         if not solo_consulta and self._abrir_desde_lista(sigla, num, anio, objetivo):
             return
         if not sufijo:
@@ -349,6 +369,119 @@ class PJN:
                 self.abrir_vinculado(v, principal, solo_consulta)
                 return
         raise RuntimeError(f"No encontré {numero} entre los vinculados de {principal}.")
+
+    def diagnostico(self, msg):
+        print(f"[diagnóstico] {msg}", flush=True)  # queda en registro.txt
+
+    def _expediente_en_pantalla(self, page=None):
+        """Número del expediente que muestra la página ahora (o None)."""
+        page = page or self.page
+        try:
+            if "/expediente.seam" not in page.url and "actuacionesHistoricas" not in page.url:
+                return None
+            texto = page.evaluate("() => document.body ? document.body.innerText : ''")
+            m = re.search(r"Expediente:\s*([^\n(]+)", texto)
+            if not m:
+                self.diagnostico(f"página de expediente sin 'Expediente:' ({page.url.split('?')[0]}): "
+                                 f"{texto[:300]!r}")
+                return None
+            return normalizar_nro(m.group(1))
+        except Exception as e:
+            self.diagnostico(f"no se pudo leer la página ({type(e).__name__}: {e})")
+            return None
+
+    def _volver_a_actuaciones(self):
+        """Si quedó en las históricas, vuelve a la vista principal del expediente."""
+        if "actuacionesHistoricas" in self.page.url:
+            volver = self.page.locator("a", has_text="Volver al expediente")
+            if volver.count():
+                volver.first.evaluate("a => a.click()")
+                self.page.wait_for_url(re.compile(r"/expediente\.seam"), timeout=90000)
+                self._esperar_expediente()
+
+    def consultar_con_verificacion(self, numero, minutos=15):
+        """Abre una ventana visible del PJN con la consulta cargada para que la persona complete
+        el verificador. Cuando aparece el expediente, el programa sigue con esa ventana."""
+        sigla, num, anio, _ = parsear_expediente(numero)
+        objetivo = normalizar_nro(numero)
+        if self._oculto is not None and self.page.is_closed():  # cerraron la ventana: se abre otra
+            for cosa in (self.ctx, self.browser):
+                try:
+                    cosa.close()
+                except Exception:
+                    pass
+            self.browser, self.ctx, self.page = self._oculto
+            self._oculto = None
+        if self._oculto is None and not self.visible:  # si ya se ve una ventana, se usa esa
+            cookies = self.ctx.cookies()
+            visible = self._lanzar(True)
+            try:
+                visible[1].add_cookies(cookies)  # misma sesión: no hay que volver a ingresar
+            except Exception:
+                pass
+            self._oculto = (self.browser, self.ctx, self.page)
+            self.browser, self.ctx, self.page = visible
+        page = self.page
+        page.goto(URL_HOME, wait_until="domcontentloaded")
+        page.wait_for_selector('[id="formPublica:camaraNumAni"]', state="attached", timeout=60000)
+        page.evaluate(
+            """([sigla, num, anio]) => {
+                 const sel = document.getElementById('formPublica:camaraNumAni');
+                 const opt = [...sel.options].find(o => o.value && o.textContent.trim().toUpperCase().startsWith(sigla + ' '));
+                 if (opt) sel.value = opt.value;
+                 document.getElementById('formPublica:numero').value = num;
+                 document.getElementById('formPublica:anio').value = anio;
+               }""", [sigla, num, anio])
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        self.avisar("Se abrió una ventana del PJN: complete el verificador y apriete «Consultar». "
+                    "El programa sigue solo.")
+        fin = time.time() + minutos * 60
+        ultimo_diag = 0
+        while time.time() < fin:
+            self._chequear_cancelado()
+            if time.time() - ultimo_diag > 10:
+                ultimo_diag = time.time()
+                todas = [(pg.url.split("?")[0], self._expediente_en_pantalla(pg)) for pg in self.ctx.pages
+                         if not pg.is_closed()]
+                self.diagnostico(f"esperando {objetivo}; páginas: {todas}")
+            # La causa puede aparecer en cualquier ventana o pestaña del programa.
+            for pg in list(self.ctx.pages):
+                if pg is not self.page and not pg.is_closed() and "/expediente.seam" in pg.url:
+                    self.page = pg
+            if self._oculto is not None:
+                for pg in list(self._oculto[1].pages):
+                    if not pg.is_closed() and "/expediente.seam" in pg.url:
+                        # Se consultó en la otra ventana: se sigue con esa y se cierra la nueva.
+                        for cosa in (self.ctx, self.browser):
+                            try:
+                                cosa.close()
+                            except Exception:
+                                pass
+                        self.browser, self.ctx, self.page = self._oculto
+                        self._oculto = None
+                        self.page = pg
+                        break
+            if self._expediente_en_pantalla() == objetivo:
+                self._esperar_expediente(objetivo)
+                return self.datos_generales()
+            if "sso.pjn.gov.ar" in page.url:
+                self.avisar("Ingrese al PJN en esa misma ventana y después complete la consulta.")
+            time.sleep(1)
+        raise RuntimeError("No se completó la consulta en la ventana del PJN.")
+
+    def volver_a_invisible(self):
+        """Cierra la ventana visible del PJN y sigue con el navegador invisible."""
+        if getattr(self, "_oculto", None):
+            for cosa in (self.ctx, self.browser):
+                try:
+                    cosa.close()
+                except Exception:
+                    pass
+            self.browser, self.ctx, self.page = self._oculto
+            self._oculto = None
 
     def consultar(self, numero):
         """Abre cualquier causa por la Consulta pública y devuelve sus datos generales."""
@@ -451,6 +584,8 @@ class PJN:
             self._esperar_expediente(objetivo)
             return
         if r and r.startswith("error:"):
+            if re.search(r"verificador|captcha", r, re.I):
+                raise NecesitaVerificacion()
             raise RuntimeError(f"{sigla} {num}/{anio}: {r[6:]}")
         raise RuntimeError(f"No se pudo abrir el expediente {sigla} {num}/{anio}. "
                            "Revise la jurisdicción, el número y el año.")
