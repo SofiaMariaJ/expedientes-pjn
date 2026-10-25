@@ -24,6 +24,13 @@ algunas Windows 10 viejas):
    c. Volver a hacer doble clic en "Instalar.bat".
 
 
+ACTUALIZACIONES
+---------------
+No hace falta reinstalar nunca mas: cada vez que se abre el icono, el programa se fija
+si hay una version nueva y se actualiza solo (tarda unos segundos). El titulo de la
+ventana muestra la version.
+
+
 USO
 ---
 1. Doble clic en "Expedientes PJN" (en el Escritorio).
