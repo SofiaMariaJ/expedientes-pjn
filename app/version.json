@@ -1,0 +1,16 @@
+{
+ "version": 7,
+ "archivos": [
+  "pjn_core.py",
+  "expedientes_pjn.pyw",
+  "lanzador.pyw",
+  "icono.ico"
+ ],
+ "requisitos": [
+  "playwright",
+  "keyring",
+  "customtkinter",
+  "truststore",
+  "certifi"
+ ]
+}

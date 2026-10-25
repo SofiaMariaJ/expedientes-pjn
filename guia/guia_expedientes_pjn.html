@@ -1,0 +1,325 @@
+<title>Instalar Expedientes PJN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&family=Literata:opsz,wght@7..72,600;7..72,800&display=swap">
+<style>
+/* Layout: una sola columna ancha, un paso por bloque, dibujo de la pantalla al lado de la instrucción. Letra grande para leer impreso. */
+:root {
+  --bg: #f6f7fb;
+  --papel: #ffffff;
+  --tinta: #1b1f33;
+  --tinta-suave: #4a5070;
+  --linea: #d9dcea;
+  --indigo: #3f51b5;
+  --indigo-claro: #e8ebf8;
+  --verde: #2e7d32;
+  --verde-claro: #e6f3e7;
+  --aviso: #8a5a00;
+  --aviso-claro: #fff4dc;
+  --marca: #ffd54a;
+
+  /* Colores fijos de los dibujos de Windows (se ven igual en tema claro y oscuro) */
+  --win-fondo: #ffffff;
+  --win-barra: #f3f3f3;
+  --win-texto: #1a1a1a;
+  --win-gris: #6b6b6b;
+  --win-borde: #c8c8c8;
+  --win-azul: #0067c0;
+  --win-azul-texto: #ffffff;
+  --ss-fondo: #0f5bb5;
+  --ss-texto: #ffffff;
+  --consola: #0c0c0c;
+  --consola-texto: #e6e6e6;
+  --consola-verde: #7ee787;
+  --escritorio: #2b4a7a;
+  --sel: #cfe3fb;
+  --ico-zip: #c99a1e; --ico-bat: #555d6e; --ico-txt: #8a8f9c; --ico-carpeta: #e8b931; --ico-pdf: #c62828; --ico-csv: #1e7b45;
+  --blanco: #ffffff; --barra-verde: #4caf50;
+
+  --f-titulo: "Literata", Georgia, "Times New Roman", serif;
+  --f-texto: "Lexend", "Segoe UI", Verdana, sans-serif;
+  --f-mono: Consolas, "Cascadia Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141726; --papel: #1c2033; --tinta: #eef0fa; --tinta-suave: #b4b9d6; --linea: #343a58;
+    --indigo: #9aa8ff; --indigo-claro: #262c4d; --verde: #8fd694; --verde-claro: #1d3324;
+    --aviso: #ffcf70; --aviso-claro: #3a2e14; --marca: #ffd54a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141726; --papel: #1c2033; --tinta: #eef0fa; --tinta-suave: #b4b9d6; --linea: #343a58;
+  --indigo: #9aa8ff; --indigo-claro: #262c4d; --verde: #8fd694; --verde-claro: #1d3324;
+  --aviso: #ffcf70; --aviso-claro: #3a2e14; --marca: #ffd54a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--tinta);
+  font-family: var(--f-texto); font-size: 20px; line-height: 1.55;
+  padding-inline: 16px; padding-block: 28px 64px;
+}
+.hoja { max-width: 980px; margin-inline: auto; display: grid; gap: 28px; }
+
+header.portada {
+  display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center;
+  background: var(--papel); border: 1px solid var(--linea); border-radius: 18px; padding: 26px 28px;
+}
+header.portada img { width: 92px; height: 92px; }
+h1 { font-family: var(--f-titulo); font-weight: 800; font-size: 2.2rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+.bajada { margin: 6px 0 0; color: var(--tinta-suave); font-size: 1.08rem; }
+
+.indice { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.indice a {
+  color: var(--indigo); background: var(--indigo-claro); text-decoration: none;
+  padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 0.95rem;
+}
+.indice a:focus-visible, a:focus-visible { outline: 3px solid var(--marca); outline-offset: 2px; }
+
+section.parte { display: grid; gap: 18px; }
+.parte-cab {
+  display: grid; gap: 4px; padding-block: 8px 2px; border-bottom: 3px solid var(--indigo);
+}
+.parte-cab .eti { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.82rem; font-weight: 700; color: var(--indigo); }
+h2 { font-family: var(--f-titulo); font-weight: 800; font-size: 1.75rem; margin: 0; text-wrap: balance; }
+.quien { margin: 2px 0 8px; color: var(--tinta-suave); }
+
+.paso {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1.05fr); gap: 22px; align-items: start;
+  background: var(--papel); border: 1px solid var(--linea); border-radius: 16px; padding: 22px;
+  break-inside: avoid;
+}
+.num {
+  width: 56px; height: 56px; border-radius: 50%; background: var(--indigo); color: var(--papel);
+  display: grid; place-items: center; font-family: var(--f-titulo); font-weight: 800; font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+}
+.paso h3 { margin: 4px 0 8px; font-size: 1.32rem; line-height: 1.3; text-wrap: balance; }
+.paso p { margin: 0 0 10px; }
+.paso p:last-child { margin-bottom: 0; }
+.boton-txt {
+  display: inline-block; padding: 1px 10px; border-radius: 6px; font-weight: 700;
+  background: var(--indigo-claro); color: var(--indigo); border: 1px solid var(--indigo);
+}
+.tecla {
+  display: inline-block; min-width: 1.8em; text-align: center; padding: 0 8px; border-radius: 6px;
+  border: 2px solid var(--tinta); border-bottom-width: 4px; font-weight: 700; font-family: var(--f-mono);
+}
+.nota {
+  background: var(--aviso-claro); color: var(--aviso); border-radius: 10px; padding: 10px 14px;
+  font-size: 0.95rem; margin-top: 10px;
+}
+.ok {
+  background: var(--verde-claro); color: var(--verde); border-radius: 10px; padding: 10px 14px;
+  font-size: 0.95rem; margin-top: 10px; font-weight: 700;
+}
+
+/* ---------- dibujos de pantallas ---------- */
+.dibujo { min-width: 0; margin: 0; }
+.dibujo figcaption { font-size: 0.82rem; color: var(--tinta-suave); margin-top: 6px; text-align: center; }
+.win {
+  background: var(--win-fondo); color: var(--win-texto); border: 1px solid var(--win-borde); border-radius: 10px;
+  overflow: hidden; font-family: "Segoe UI", Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.4;
+  box-shadow: 0 6px 18px rgba(20, 24, 50, 0.16);
+}
+.win .barra {
+  background: var(--win-barra); border-bottom: 1px solid var(--win-borde); padding: 7px 12px;
+  display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--win-gris);
+}
+.win .barra span:last-child { letter-spacing: 10px; }
+.win .cuerpo { padding: 14px 16px; display: grid; gap: 10px; }
+.wbtn {
+  display: inline-block; padding: 6px 16px; border-radius: 6px; border: 1px solid var(--win-borde);
+  background: var(--win-barra); color: var(--win-texto); font-weight: 600; font-size: 14px;
+}
+.wbtn.prim { background: var(--win-azul); color: var(--win-azul-texto); border-color: var(--win-azul); }
+.marcado { outline: 4px solid var(--marca); outline-offset: 3px; border-radius: 6px; }
+.flecha { color: var(--win-azul); font-weight: 700; }
+
+.menu { width: max-content; max-width: 100%; border: 1px solid var(--win-borde); border-radius: 8px; background: var(--win-fondo); padding: 6px 0; }
+.menu div { padding: 6px 18px; }
+.menu .hl { background: var(--sel); }
+.archivo { display: flex; align-items: center; gap: 10px; }
+.ico-zip, .ico-bat, .ico-carpeta, .ico-pdf, .ico-csv {
+  width: 34px; height: 40px; border-radius: 4px; flex: none; display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; color: var(--win-azul-texto);
+}
+.ico-zip { background: var(--ico-zip); }
+.ico-bat { background: var(--ico-bat); }
+.ico-carpeta { background: var(--ico-carpeta); width: 40px; height: 32px; }
+.ico-pdf { background: var(--ico-pdf); }
+.ico-csv { background: var(--ico-csv); }
+
+.ss { background: var(--ss-fondo); color: var(--ss-texto); padding: 18px 18px 14px; border-radius: 10px;
+  font-family: "Segoe UI", Arial, Helvetica, sans-serif; font-size: 15px; display: grid; gap: 10px; box-shadow: 0 6px 18px rgba(20, 24, 50, 0.2); }
+.ss strong { font-size: 21px; font-weight: 600; }
+.ss .link { text-decoration: underline; font-weight: 600; }
+.ss .fila { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.ss .sbtn { border: 2px solid var(--ss-texto); padding: 5px 14px; border-radius: 4px; font-weight: 600; }
+
+.consola { background: var(--consola); color: var(--consola-texto); font-family: var(--f-mono); font-size: 13.5px;
+  border-radius: 8px; padding: 14px; line-height: 1.5; overflow-x: auto; white-space: pre; box-shadow: 0 6px 18px rgba(20, 24, 50, 0.2); }
+.consola .v { color: var(--consola-verde); }
+.consola .y { background: var(--marca); color: var(--consola); padding: 0 4px; }
+
+.escritorio { background: var(--escritorio); border-radius: 10px; padding: 22px; display: grid; place-items: center; min-height: 170px; }
+.acceso { display: grid; justify-items: center; gap: 6px; color: var(--blanco); font-family: "Segoe UI", Arial, Helvetica, sans-serif; font-size: 14px; text-align: center; padding: 8px; }
+.acceso img { width: 64px; height: 64px; }
+
+.campo { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px; }
+.input { border: 1px solid var(--win-borde); border-radius: 4px; padding: 4px 8px; min-height: 30px; color: var(--win-gris); background: var(--win-fondo); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check { display: flex; align-items: center; gap: 8px; }
+.check i { width: 16px; height: 16px; border: 1.5px solid var(--win-gris); border-radius: 3px; display: inline-block; flex: none; }
+.check i.on { background: var(--win-azul); border-color: var(--win-azul); box-shadow: inset 0 0 0 3px var(--win-fondo); }
+
+.tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tabla th { text-align: left; background: var(--win-barra); color: var(--win-texto); padding: 5px 6px; border-bottom: 1px solid var(--win-borde); font-weight: 600; }
+.tabla td { padding: 5px 6px; border-bottom: 1px solid var(--win-barra); vertical-align: top; }
+.tabla tr.sel td { background: var(--sel); }
+.scroll-x { overflow-x: auto; }
+.progreso { height: 14px; border-radius: 7px; background: var(--win-barra); border: 1px solid var(--win-borde); overflow: hidden; }
+.progreso b { display: block; height: 100%; width: 40%; background: var(--barra-verde); }
+.lista-arch { display: grid; gap: 6px; font-size: 13.5px; }
+.lista-arch .archivo { gap: 8px; }
+.lista-arch .ico-pdf, .lista-arch .ico-csv { width: 22px; height: 26px; font-size: 7px; }
+
+/* ---------- problemas ---------- */
+.problemas { display: grid; gap: 12px; }
+.prob { background: var(--papel); border: 1px solid var(--linea); border-radius: 14px; padding: 16px 20px; break-inside: avoid; }
+.prob h3 { margin: 0 0 4px; font-size: 1.12rem; }
+.prob p { margin: 0; }
+.ayuda { background: var(--indigo); color: var(--papel); border-radius: 16px; padding: 22px 26px; font-size: 1.15rem; }
+.ayuda strong { font-family: var(--f-titulo); font-size: 1.4rem; display: block; margin-bottom: 4px; }
+
+@media (max-width: 760px) {
+  body { font-size: 18px; }
+  .paso { grid-template-columns: 1fr; gap: 14px; padding: 18px; }
+  .num { width: 46px; height: 46px; font-size: 1.4rem; }
+  header.portada { grid-template-columns: 1fr; }
+  h1 { font-size: 1.8rem; }
+}
+@media print {
+  body { background: var(--blanco); font-size: 16px; padding-block: 0; }
+  .indice { display: none; }
+  .paso { grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px; }
+  .num { width: 44px; height: 44px; font-size: 1.35rem; }
+}
+@page { size: A4; margin: 14mm; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="hoja">
+
+<header class="portada">
+  <img src="data:image/png;base64,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" alt="Ícono de Expedientes PJN">
+  <div>
+    <h1>Cómo instalar Expedientes PJN</h1>
+    <p class="bajada">Paso a paso para instalar el programa en una computadora con Windows. Se hace una sola vez.</p>
+  </div>
+</header>
+
+<!-- ====================================================== INSTALACIÓN -->
+<section class="parte" id="instalar" aria-labelledby="t-inst">
+  <div class="parte-cab">
+    <span class="eti">4 pasos · unos 10 minutos</span>
+    <h2 id="t-inst">Instalación del programa</h2>
+  </div>
+  <p class="quien">Hace falta internet. No hay que instalar nada antes: el instalador se encarga de todo. Mire el dibujo de la derecha de cada paso: lo marcado en amarillo es donde tiene que hacer clic.</p>
+
+  <article class="paso">
+    <div class="num" aria-hidden="true">1</div>
+    <div>
+      <h3>Descomprima la carpeta</h3>
+      <p>Busque el archivo <b>ExpedientesPJN-Windows.zip</b> (suele estar en la carpeta Descargas).</p>
+      <p>Haga <b>clic derecho</b> sobre él y elija <b>Extraer todo…</b>. En la ventana que aparece, apriete <span class="boton-txt">Extraer</span>.</p>
+      <div class="nota">Importante: no abra el instalador desde adentro del ZIP. Primero hay que extraerlo.</div>
+    </div>
+    <figure class="dibujo">
+      <div class="win">
+        <div class="cuerpo">
+          <div class="archivo"><span class="ico-zip">ZIP</span>ExpedientesPJN-Windows.zip</div>
+          <div class="menu">
+            <div>Abrir</div>
+            <div class="hl marcado">Extraer todo…</div>
+            <div>Copiar</div>
+            <div>Propiedades</div>
+          </div>
+        </div>
+      </div>
+      <figcaption>Clic derecho sobre el ZIP</figcaption>
+    </figure>
+  </article>
+
+  <article class="paso">
+    <div class="num" aria-hidden="true">2</div>
+    <div>
+      <h3>Abra “Instalar”</h3>
+      <p>En la carpeta extraída hay un archivo llamado <b>Instalar</b> (o <b>Instalar.bat</b>). Hágale <b>doble clic</b>.</p>
+      <p>Si aparece la ventana azul <b>“Windows protegió su PC”</b>: haga clic en <b>Más información</b> y después en <span class="boton-txt">Ejecutar de todas formas</span>.</p>
+      <div class="nota">Este aviso aparece porque el programa es casero y no está firmado. Es normal.</div>
+    </div>
+    <figure class="dibujo" style="display:grid;gap:12px">
+      <div class="win">
+        <div class="cuerpo">
+          <div class="archivo"><span class="ico-carpeta"></span>app</div>
+          <div class="archivo marcado"><span class="ico-bat">BAT</span>Instalar</div>
+          <div class="archivo"><span class="ico-bat" style="background:var(--ico-txt)">TXT</span>LEEME</div>
+        </div>
+      </div>
+      <div class="ss">
+        <strong>Windows protegió su PC</strong>
+        <span>Windows SmartScreen impidió el inicio de una aplicación no reconocida…</span>
+        <span class="link marcado" style="width:max-content">Más información</span>
+        <div class="fila"><span class="sbtn marcado">Ejecutar de todas formas</span><span class="sbtn">No ejecutar</span></div>
+      </div>
+      <figcaption>El archivo y el aviso de Windows</figcaption>
+    </figure>
+  </article>
+
+  <article class="paso">
+    <div class="num" aria-hidden="true">3</div>
+    <div>
+      <h3>Espere a que diga “Listo”</h3>
+      <p>Se abre una ventana negra con letras. <b>No la cierre.</b> Tarda unos minutos.</p>
+      <p>Si pregunta en inglés <b>“Do you agree…? [Y] Yes [N] No”</b>, escriba <span class="tecla">Y</span> y apriete <span class="tecla">Enter</span>. Está pidiendo permiso para instalar Python, el programa que necesita.</p>
+      <p>Cuando diga <b>“Listo”</b>, apriete cualquier tecla y la ventana se cierra.</p>
+    </div>
+    <figure class="dibujo">
+      <div class="consola" role="img" aria-label="Ventana negra del instalador">Instalando "Expedientes PJN"...
+
+Do you agree to all the
+source agreements terms?
+[Y] Yes  [N] No: <span class="y">Y</span>
+
+Instalando librerias...
+
+<span class="v">Listo. En el Escritorio
+quedo el icono
+"Expedientes PJN".</span>
+
+Presione una tecla para
+continuar . . .</div>
+      <figcaption>La ventana del instalador</figcaption>
+    </figure>
+  </article>
+
+  <article class="paso">
+    <div class="num" aria-hidden="true">4</div>
+    <div>
+      <h3>Listo: ya está el ícono</h3>
+      <p>En el Escritorio apareció el ícono <b>Expedientes PJN</b>. Desde ahora, para usar el programa, se hace doble clic en ese ícono.</p>
+      <p>La carpeta descomprimida y el ZIP ya se pueden borrar.</p>
+      <div class="nota">Si el instalador dice “No se pudo instalar Python automáticamente”: entre a python.org/downloads, baje Python con el botón amarillo, ábralo, tilde “Add python.exe to PATH”, apriete “Install Now” y vuelva a abrir Instalar.</div>
+    </div>
+    <figure class="dibujo">
+      <div class="escritorio">
+        <div class="acceso"><img src="data:image/png;base64,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" alt="">Expedientes PJN</div>
+      </div>
+      <figcaption>El ícono nuevo en el Escritorio</figcaption>
+    </figure>
+  </article>
+</section>
+
+</div>

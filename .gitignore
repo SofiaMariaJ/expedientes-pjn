@@ -1,0 +1,10 @@
+.venv/
+.sesion_pjn/
+descargas/
+capturas/
+dist/
+__pycache__/
+.DS_Store
+app/config.json
+app/registro.txt
+app/respaldo/

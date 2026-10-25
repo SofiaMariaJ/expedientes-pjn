@@ -1,0 +1,5 @@
+playwright
+keyring
+customtkinter
+truststore
+certifi

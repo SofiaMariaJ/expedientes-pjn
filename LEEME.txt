@@ -1,0 +1,65 @@
+EXPEDIENTES PJN
+===============
+
+Programa para bajar todos los documentos de un expediente del Poder Judicial
+de la Nacion (Consultas > Sistema de Consulta Web).
+
+
+INSTALACION (una sola vez, en la PC con Windows)
+------------------------------------------------
+1. Descomprimir esta carpeta (clic derecho > "Extraer todo").
+No hace falta instalar nada antes: el instalador baja e instala Python solo.
+
+2. Doble clic en "Instalar.bat".
+   - Si Windows muestra "Windows protegio su PC": "Mas informacion" > "Ejecutar de todas formas".
+   - Si la PC no tiene Python, lo instala automaticamente. Puede preguntar
+     "Do you agree to all the source agreements terms?": escribir Y y Enter.
+   - Tarda unos minutos. Al final dice "Listo".
+3. En el Escritorio aparece el icono "Expedientes PJN".
+
+Si el instalador dice "No se pudo instalar Python automaticamente" (pasa en
+algunas Windows 10 viejas):
+   a. Entrar a https://www.python.org/downloads/ y bajar Python (boton amarillo).
+   b. Abrir el archivo bajado, tildar "Add python.exe to PATH" y apretar "Install Now".
+   c. Volver a hacer doble clic en "Instalar.bat".
+
+
+USO
+---
+1. Doble clic en "Expedientes PJN" (en el Escritorio).
+2. Escribir CUIT/CUIL y clave del PJN y apretar "Ingresar".
+   Si se tilda "Recordar mis datos en esta computadora", la proxima vez entra solo.
+   (Los datos quedan guardados en el Administrador de credenciales de Windows.)
+3. Aparece la lista de "Mis expedientes". Se puede escribir en "Buscar" para filtrar
+   por numero o caratula. Tildar "Mostrar tambien los que estan fuera de tramite"
+   para ver los archivados.
+4. Hacer clic en un expediente y apretar "Descargar expediente seleccionado"
+   (o doble clic sobre el expediente).
+   Tildar "Incluir incidentes y expedientes vinculados" para bajar tambien esos.
+   CAUSAS DE OTROS: en la pestana "Consultar cualquier causa" elegir la jurisdiccion,
+   escribir numero y ano, apretar "Buscar" y, si es la correcta, "Descargar esta causa".
+5. Al terminar se abre la carpeta con los archivos.
+   Por defecto: Documentos\Expedientes PJN\<numero de expediente>
+
+
+QUE SE BAJA
+-----------
+- Cada documento de las actuaciones (actuales e historicas), con la fecha adelante,
+  asi quedan ordenados del mas viejo al mas nuevo:
+    2026-05-05 ESCRITO INICIO - DEMANDA.pdf
+    2026-05-07 FIRMA DESPACHO - ...pdf
+- indice.csv: lista de todas las actuaciones (se abre con Excel).
+- expediente.txt: caratula, juzgado y situacion.
+- Primero lee la lista de actuaciones y despues baja los archivos. Los archivos grandes
+  pueden tardar varios minutos: el PJN los manda despacio.
+- Si se corta o falta algun documento, volver a descargar la misma causa: baja solo lo que falta.
+- Algunos documentos (por ejemplo, quejas de otra instancia) el PJN no los deja ver con
+  la cuenta: figuran en indice.csv como "(sin permiso en el PJN)" y la descarga sigue.
+
+
+PROBLEMAS
+---------
+- "Ingresar desde el navegador": abre la pagina del PJN para ingresar a mano
+  (sirve si el PJN pide cambiar la clave o aceptar algo).
+- Detalle de errores: %LOCALAPPDATA%\ExpedientesPJN\registro.txt
+- Para desinstalar: borrar la carpeta %LOCALAPPDATA%\ExpedientesPJN y el icono del Escritorio.
