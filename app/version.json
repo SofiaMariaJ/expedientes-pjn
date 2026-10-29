@@ -1,7 +1,8 @@
 {
- "version": 8,
+ "version": 9,
  "archivos": [
   "pjn_core.py",
+  "mev_core.py",
   "expedientes_pjn.pyw",
   "lanzador.pyw",
   "icono.ico"

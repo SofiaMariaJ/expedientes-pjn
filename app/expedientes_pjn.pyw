@@ -35,6 +35,7 @@ import customtkinter as ctk
 
 sys.path.insert(0, str(APP_DIR))
 import pjn_core  # noqa: E402
+import mev_core  # noqa: E402
 from playwright.sync_api import TimeoutError as PWTimeout  # noqa: E402
 
 try:
@@ -43,6 +44,7 @@ except Exception:  # sin keyring no se puede recordar la clave
     keyring = None
 
 SERVICIO = "ExpedientesPJN"
+SERVICIO_MEV = "ExpedientesPJN-MEV"
 try:
     VERSION = str(json.loads((APP_DIR / "version.json").read_text("utf-8"))["version"])
 except Exception:
@@ -120,6 +122,45 @@ def recordar_clave(usuario, clave):
         traceback.print_exc()
 
 
+def mev_guardada():
+    """(usuario, clave, creado_en) de la MEV recordados en esta computadora."""
+    if keyring is None:
+        return None
+    try:
+        usuario = keyring.get_password(SERVICIO_MEV, "usuario")
+        if not usuario:
+            return None
+        clave = keyring.get_password(SERVICIO_MEV, usuario)
+        creado = keyring.get_password(SERVICIO_MEV, "creado_en") or "aa"
+        return (usuario, clave, creado) if clave else None
+    except Exception:
+        return None
+
+
+def mev_recordar(usuario, clave, creado):
+    if keyring is None:
+        return
+    try:
+        keyring.set_password(SERVICIO_MEV, "usuario", usuario)
+        keyring.set_password(SERVICIO_MEV, usuario, clave)
+        keyring.set_password(SERVICIO_MEV, "creado_en", creado)
+    except Exception:
+        traceback.print_exc()
+
+
+def mev_olvidar():
+    if keyring is None:
+        return
+    try:
+        usuario = keyring.get_password(SERVICIO_MEV, "usuario")
+        if usuario:
+            keyring.delete_password(SERVICIO_MEV, usuario)
+        keyring.delete_password(SERVICIO_MEV, "usuario")
+        keyring.delete_password(SERVICIO_MEV, "creado_en")
+    except Exception:
+        pass
+
+
 def olvidar_clave():
     if keyring is None:
         return
@@ -143,13 +184,18 @@ class Trabajador(threading.Thread):
         self.eventos = eventos
         self.cancelar = threading.Event()
         self.pjn = None
+        self.mev = None
         self.credenciales = None  # solo en memoria, para reingresar si vence la sesión
+        self.credenciales_mev = None
 
     def avisar(self, texto, actual=None, total=None):
         print(texto, flush=True)
         self.eventos.put(("progreso", texto, actual, total))
 
     def _nuevo_pjn(self, visible):
+        if self.mev:  # la MEV usa el mismo motor: se cierra y se vuelve a abrir cuando haga falta
+            self.mev.cerrar()
+            self.mev = None
         if self.pjn:
             self.pjn.cerrar()
         self.pjn = pjn_core.PJN(avisar=self.avisar, cancelar=self.cancelar, visible=visible)
@@ -159,6 +205,8 @@ class Trabajador(threading.Thread):
         while True:
             orden, *args = self.ordenes.get()
             if orden == "salir":
+                if self.mev:
+                    self.mev.cerrar()
                 if self.pjn:
                     self.pjn.cerrar()
                 return
@@ -170,6 +218,63 @@ class Trabajador(threading.Thread):
             except Exception as e:
                 traceback.print_exc()
                 self.eventos.put(("error", orden, str(e) or e.__class__.__name__))
+
+    # --- MEV (provincia de Buenos Aires)
+
+    def _sesion_mev(self):
+        if self.mev is None:
+            if not self.credenciales_mev:
+                raise mev_core.SesionVencidaMEV()
+            self.mev = mev_core.MEVSesion(self.pjn._pw, avisar=self.avisar, cancelar=self.cancelar)
+            self.mev.abrir()
+            self.mev.ingresar(*self.credenciales_mev)
+        return self.mev
+
+    def _con_mev(self, accion):
+        """Ejecuta accion(mev); si la sesión de la MEV venció, vuelve a ingresar y reintenta."""
+        for intento in range(3):
+            try:
+                return accion(self._sesion_mev())
+            except mev_core.SesionVencidaMEV:
+                if not self.credenciales_mev or intento == 2:
+                    raise RuntimeError("La sesión de la MEV venció. Vuelva a ingresar.")
+                self.avisar("La sesión de la MEV venció; ingresando de nuevo…")
+                if self.mev:
+                    self.mev.cerrar()
+                self.mev = None
+
+    def _mev_ingresar(self, usuario, clave, creado):
+        self.avisar("Ingresando a la MEV…")
+        if self.mev:
+            self.mev.cerrar()
+        self.mev = mev_core.MEVSesion(self.pjn._pw, avisar=self.avisar, cancelar=self.cancelar)
+        self.mev.abrir()
+        try:
+            self.mev.ingresar(usuario, clave, creado)
+        except mev_core.ErrorLoginMEV as e:
+            self.mev.cerrar()
+            self.mev = None
+            self.eventos.put(("mev_login_error", str(e)))
+            return
+        self.credenciales_mev = (usuario, clave, creado)
+        self.eventos.put(("mev_login_ok",))
+
+    def _mev_organismos(self, jurisdiccion):
+        self.avisar("Buscando los juzgados…")
+        organismos = self._con_mev(lambda m: m.elegir_jurisdiccion(jurisdiccion))
+        self.eventos.put(("mev_organismos", jurisdiccion, organismos))
+
+    def _mev_buscar(self, jurisdiccion, organismo, modo, texto, estado):
+        self.avisar("Buscando en la MEV…")
+        res = self._con_mev(lambda m: m.buscar(jurisdiccion, organismo, modo, texto, estado))
+        self.eventos.put(("mev_resultados", res))
+
+    def _mev_descargar(self, item, destino):
+        nombre = pjn_core.limpiar_nombre(f"{item.get('expediente') or item['nid']} {item.get('caratula', '')}", 90)
+        carpeta = Path(destino) / "Provincia (MEV)" / nombre
+        carpeta, docs, errores = self._con_mev(lambda m: m.descargar_causa(item["nid"], item["pid"], carpeta))
+        self.eventos.put(("descarga_ok", str(carpeta), docs, errores))
+        self.eventos.put(("mev_bajada", item))
 
     def _ingresar(self, usuario, clave):
         self.avisar("Ingresando al PJN…")
@@ -319,6 +424,7 @@ class App:
         self.causa_encontrada = None
         self.btn_ingresar = None
         self.btn_descargar = None
+        self.mev_conectada = False
 
         root.title(f"Expedientes PJN — versión {VERSION}")
         root.configure(fg_color=C_FONDO)
@@ -374,6 +480,7 @@ class App:
             w.destroy()
         self.btn_ingresar = None
         self.btn_descargar = None
+        self.mev_conectada = False
 
     def pantalla_ingreso(self):
         self.limpiar()
@@ -443,7 +550,8 @@ class App:
         cuerpo.pack(fill="both", expand=True, padx=24, pady=(18, 0))
 
         self.selector = ctk.CTkSegmentedButton(
-            cuerpo, values=["Mis causas", "Consultar cualquier causa"], command=self._cambiar_seccion,
+            cuerpo, values=["Mis causas", "Consultar cualquier causa", "Provincia (MEV)"],
+            command=self._cambiar_seccion,
             font=fuente(14, "bold"), height=40, corner_radius=10, fg_color="#E4E6F0",
             selected_color=C_ACENTO, selected_hover_color=C_ACENTO_HOVER,
             unselected_color="#E4E6F0", unselected_hover_color="#D8DBEA",
@@ -455,6 +563,7 @@ class App:
         self.contenedor.pack(fill="both", expand=True, pady=(14, 0))
         self.sec_mias = self._armar_mias(self.contenedor)
         self.sec_otra = self._armar_consulta(self.contenedor)
+        self.sec_mev = self._armar_mev(self.contenedor)
 
         self.selector.set("Mis causas")
         self._cambiar_seccion("Mis causas")
@@ -469,10 +578,21 @@ class App:
             pass
 
     def _cambiar_seccion(self, valor):
-        self.sec_mias.pack_forget()
-        self.sec_otra.pack_forget()
-        (self.sec_mias if valor == "Mis causas" else self.sec_otra).pack(fill="both", expand=True)
+        for sec in (self.sec_mias, self.sec_otra, self.sec_mev):
+            sec.pack_forget()
+        {"Mis causas": self.sec_mias, "Consultar cualquier causa": self.sec_otra}.get(
+            valor, self.sec_mev).pack(fill="both", expand=True)
         self._ajustar_texto_selector()
+        if valor == "Provincia (MEV)" and not self.mev_conectada and not self.ocupado:
+            guardada = mev_guardada()
+            if guardada:  # entra sola con los datos recordados
+                self.e_mev_usuario.delete(0, "end")
+                self.e_mev_usuario.insert(0, guardada[0])
+                self.e_mev_clave.delete(0, "end")
+                self.e_mev_clave.insert(0, guardada[1])
+                self.var_mev_creado.set(self._nombre_creado(guardada[2]))
+                self.var_mev_recordar.set(True)
+                self.mev_ingresar()
 
     def _armar_mias(self, padre):
         sec = tarjeta(padre)
@@ -582,6 +702,212 @@ class App:
         self.btn_descargar_otra.grid(row=0, column=1, sticky="e", padx=18, pady=12)
         return sec
 
+    # --- sección Provincia (MEV)
+
+    def _nombre_creado(self, codigo):
+        return next((n for c, n in mev_core.CREADO_EN if c == codigo), mev_core.CREADO_EN[0][1])
+
+    def _armar_mev(self, padre):
+        sec = tarjeta(padre)
+        f = self.mev_scroll = ctk.CTkScrollableFrame(sec, fg_color="transparent", scrollbar_button_color="#C9CDE0",
+                                                     scrollbar_button_hover_color="#AEB3CC")
+        f.pack(fill="both", expand=True, padx=(24, 8), pady=10)
+        ctk.CTkLabel(f, text="Provincia de Buenos Aires (MEV)", font=fuente(20, "bold"), text_color=C_TEXTO,
+                     anchor="w").pack(fill="x")
+        ctk.CTkLabel(f, text="Causas de la Mesa de Entradas Virtual de la Suprema Corte bonaerense.",
+                     font=fuente(14), text_color=C_SUAVE, anchor="w").pack(fill="x", pady=(2, 14))
+        estilo_menu = dict(height=42, corner_radius=8, fg_color="#EEF0F8", button_color="#E1E4F2",
+                           button_hover_color="#D3D7EB", text_color=C_TEXTO, font=fuente(14), dropdown_font=fuente(13),
+                           dropdown_fg_color=C_TARJETA, dropdown_hover_color=C_ACENTO_CLARO,
+                           dropdown_text_color=C_TEXTO, dynamic_resizing=False)
+
+        # Ingreso a la MEV (usuario propio de la MEV, no es el CUIT)
+        self.mev_login = ctk.CTkFrame(f, fg_color="transparent")
+        self.mev_login.pack(fill="x")
+        fila = ctk.CTkFrame(self.mev_login, fg_color="transparent")
+        fila.pack(anchor="w")
+        for col, (titulo, attr, ph, extra) in enumerate([("Usuario de la MEV", "e_mev_usuario", "No es el CUIT", {}),
+                                                         ("Clave", "e_mev_clave", "Clave de la MEV", {"show": "•"})]):
+            c = ctk.CTkFrame(fila, fg_color="transparent")
+            c.grid(row=0, column=col, padx=(0, 14), sticky="w")
+            ctk.CTkLabel(c, text=titulo, font=fuente(13, "bold"), text_color=C_TEXTO, anchor="w").pack(fill="x")
+            e = campo(c, ph, ancho=230, **extra)
+            e.pack(pady=(4, 0))
+            setattr(self, attr, e)
+        c = ctk.CTkFrame(fila, fg_color="transparent")
+        c.grid(row=0, column=2, sticky="w")
+        ctk.CTkLabel(c, text="Creado en", font=fuente(13, "bold"), text_color=C_TEXTO, anchor="w").pack(fill="x")
+        self.var_mev_creado = tk.StringVar(value=self._nombre_creado(self.cfg.get("mev_creado_en", "aa")))
+        ctk.CTkOptionMenu(c, values=[n for _, n in mev_core.CREADO_EN], variable=self.var_mev_creado, width=260,
+                          **estilo_menu).pack(pady=(4, 0))
+        self.var_mev_recordar = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self.mev_login, text="Recordar mis datos de la MEV en esta computadora",
+                        variable=self.var_mev_recordar, font=fuente(13), text_color=C_TEXTO, fg_color=C_ACENTO,
+                        hover_color=C_ACENTO_HOVER, border_color="#B9BED6", checkbox_width=18, checkbox_height=18,
+                        corner_radius=4).pack(anchor="w", pady=(12, 10))
+        self.btn_mev_ingresar = boton(self.mev_login, "Ingresar a la MEV", self.mev_ingresar, width=220)
+        self.btn_mev_ingresar.pack(anchor="w")
+        self.e_mev_clave.bind("<Return>", lambda e: self.mev_ingresar())
+
+        # Búsqueda (aparece después de ingresar)
+        self.mev_busqueda = ctk.CTkFrame(f, fg_color="transparent")
+        fila = ctk.CTkFrame(self.mev_busqueda, fg_color="transparent")
+        fila.pack(anchor="w", fill="x")
+        c = ctk.CTkFrame(fila, fg_color="transparent")
+        c.grid(row=0, column=0, padx=(0, 14), sticky="w")
+        ctk.CTkLabel(c, text="Departamento judicial", font=fuente(13, "bold"), text_color=C_TEXTO,
+                     anchor="w").pack(fill="x")
+        nombres_jur = [n for _, n in mev_core.JURISDICCIONES]
+        self.var_mev_jur = tk.StringVar(value=self.cfg.get("mev_jur") if self.cfg.get("mev_jur") in nombres_jur
+                                        else "Elija…")
+        ctk.CTkOptionMenu(c, values=nombres_jur, variable=self.var_mev_jur, width=280,
+                          command=lambda v: self.mev_cargar_organismos(), **estilo_menu).pack(pady=(4, 0))
+        c = ctk.CTkFrame(fila, fg_color="transparent")
+        c.grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(c, text="Juzgado / organismo", font=fuente(13, "bold"), text_color=C_TEXTO,
+                     anchor="w").pack(fill="x")
+        self.var_mev_org = tk.StringVar(value="Primero elija el departamento")
+        self.menu_mev_org = ctk.CTkOptionMenu(c, values=["Primero elija el departamento"], variable=self.var_mev_org,
+                                              width=420, **estilo_menu)
+        self.menu_mev_org.pack(pady=(4, 0))
+        self.mev_organismos = []
+
+        fila = ctk.CTkFrame(self.mev_busqueda, fg_color="transparent")
+        fila.pack(anchor="w", pady=(14, 0))
+        self.var_mev_modo = tk.StringVar(value="Número")
+        ctk.CTkSegmentedButton(fila, values=["Número", "Carátula", "Receptoría"], variable=self.var_mev_modo,
+                               font=fuente(13, "bold"), height=40, corner_radius=8, fg_color="#E4E6F0",
+                               selected_color=C_ACENTO, selected_hover_color=C_ACENTO_HOVER,
+                               unselected_color="#D8DBEA", unselected_hover_color="#CCD0E3",
+                               text_color="#FFFFFF").grid(row=0, column=0, padx=(0, 10))
+        self.e_mev_texto = campo(fila, "Número de expediente o parte de la carátula", ancho=330)
+        self.e_mev_texto.grid(row=0, column=1, padx=(0, 10))
+        self.e_mev_texto.bind("<Return>", lambda e: self.mev_buscar())
+        fila = ctk.CTkFrame(self.mev_busqueda, fg_color="transparent")
+        fila.pack(anchor="w", pady=(10, 0))
+        self.var_mev_estado = tk.StringVar(value="Activas y archivadas")
+        ctk.CTkOptionMenu(fila, values=["Activas y archivadas", "Solo activas", "Solo archivadas"],
+                          variable=self.var_mev_estado, width=220, **estilo_menu).grid(row=0, column=0, padx=(0, 10))
+        self.btn_mev_buscar = boton(fila, "Buscar", self.mev_buscar, width=140)
+        self.btn_mev_buscar.grid(row=0, column=1)
+
+        self.lbl_mev_lista = ctk.CTkLabel(self.mev_busqueda, text="", font=fuente(14, "bold"), text_color=C_TEXTO,
+                                          anchor="w")
+        self.lbl_mev_lista.pack(fill="x", pady=(16, 6))
+        tabla = ctk.CTkFrame(self.mev_busqueda, fg_color=C_TARJETA, corner_radius=0)
+        tabla.pack(fill="x")
+        cols = ("expediente", "caratula", "estado", "inicio", "ultimo")
+        self.tree_mev = ttk.Treeview(tabla, columns=cols, show="headings", selectmode="browse",
+                                     style="PJN.Treeview", height=7)
+        for col, titulo, ancho in [("expediente", "Expediente", 150), ("caratula", "Carátula", 430),
+                                   ("estado", "Estado", 110), ("inicio", "Inicio", 95), ("ultimo", "Último paso", 220)]:
+            self.tree_mev.heading(col, text=titulo, anchor="w")
+            self.tree_mev.column(col, width=ancho, anchor="w", stretch=(col == "caratula"))
+        self.tree_mev.tag_configure("par", background="#F8F9FD")
+        sb = ctk.CTkScrollbar(tabla, command=self.tree_mev.yview, button_color="#C9CDE0",
+                              button_hover_color="#AEB3CC")
+        self.tree_mev.configure(yscrollcommand=sb.set)
+        self.tree_mev.pack(side="left", fill="x", expand=True)
+        sb.pack(side="right", fill="y")
+        self.tree_mev.bind("<Double-1>", lambda e: self.mev_descargar())
+        abajo = ctk.CTkFrame(self.mev_busqueda, fg_color="transparent")
+        abajo.pack(fill="x", pady=(12, 4))
+        self.btn_mev_descargar = boton(abajo, "Descargar la causa elegida", self.mev_descargar, width=280)
+        self.btn_mev_descargar.pack(side="left")
+        ctk.CTkButton(abajo, text="Salir de la MEV", command=self.mev_salir, fg_color="transparent",
+                      hover_color=C_ACENTO_CLARO, text_color=C_ACENTO, font=fuente(13), width=120,
+                      height=30).pack(side="right")
+        self.mev_items = []
+        return sec
+
+    def _mostrar_mev_items(self, items, titulo):
+        self.mev_items = items
+        self.tree_mev.delete(*self.tree_mev.get_children())
+        for i, it in enumerate(items):
+            self.tree_mev.insert("", "end", iid=str(i), tags=("par",) if i % 2 else (), values=(
+                it.get("expediente", ""), it.get("caratula", ""), it.get("estado", ""), it.get("inicio", ""),
+                it.get("ultimo", "")))
+        self.lbl_mev_lista.configure(text=titulo)
+
+    def _mostrar_recientes_mev(self):
+        recientes = self.cfg.get("mev_recientes", [])
+        self._mostrar_mev_items(recientes, "Causas de provincia bajadas antes (para actualizarlas)" if recientes
+                                else "Busque una causa para descargarla.")
+
+    def mev_ingresar(self):
+        if self.ocupado:
+            return
+        usuario = self.e_mev_usuario.get().strip()
+        clave = self.e_mev_clave.get()
+        creado = next((c for c, n in mev_core.CREADO_EN if n == self.var_mev_creado.get()), "aa")
+        if not usuario or not clave:
+            self.estado("Escriba el usuario y la clave de la MEV.", error=True)
+            return
+        self._mev_cred = (usuario, clave, creado)
+        self.set_ocupado(True)
+        self.trabajador.ordenes.put(("mev_ingresar", usuario, clave, creado))
+
+    def mev_salir(self):
+        if self.ocupado:
+            return
+        if self.var_mev_recordar.get() and messagebox.askyesno(
+                "Salir de la MEV", "¿Olvidar también el usuario y la clave de la MEV guardados en esta computadora?"):
+            mev_olvidar()
+            self.var_mev_recordar.set(False)
+        self.trabajador.credenciales_mev = None
+        self.mev_conectada = False
+        self.mev_busqueda.pack_forget()
+        self.mev_login.pack(fill="x")
+
+    def mev_cargar_organismos(self):
+        codigo = next((c for c, n in mev_core.JURISDICCIONES if n == self.var_mev_jur.get()), None)
+        if not codigo or self.ocupado:
+            return
+        self.cfg["mev_jur"] = self.var_mev_jur.get()
+        guardar_config(self.cfg)
+        self.menu_mev_org.configure(values=["Cargando…"])
+        self.var_mev_org.set("Cargando…")
+        self.set_ocupado(True)
+        self.trabajador.ordenes.put(("mev_organismos", codigo))
+
+    def mev_buscar(self):
+        if self.ocupado:
+            return
+        jur = next((c for c, n in mev_core.JURISDICCIONES if n == self.var_mev_jur.get()), None)
+        org = next((c for c, n in self.mev_organismos if n == self.var_mev_org.get()), None)
+        texto = self.e_mev_texto.get().strip()
+        if not jur or not org:
+            messagebox.showinfo("Expedientes PJN", "Elija el departamento judicial y el juzgado.")
+            return
+        if not texto:
+            messagebox.showinfo("Expedientes PJN", "Escriba el número de expediente o parte de la carátula.")
+            return
+        modo = {"Número": "numero", "Carátula": "caratula", "Receptoría": "receptoria"}[self.var_mev_modo.get()]
+        estado = {"Activas y archivadas": "ambas", "Solo activas": "activas",
+                  "Solo archivadas": "archivadas"}[self.var_mev_estado.get()]
+        self.cfg["mev_org"] = self.var_mev_org.get()
+        guardar_config(self.cfg)
+        self.set_ocupado(True)
+        self.trabajador.ordenes.put(("mev_buscar", jur, org, modo, texto, estado))
+
+    def mev_descargar(self):
+        if self.ocupado:
+            return
+        sel = self.tree_mev.selection()
+        if not sel:
+            messagebox.showinfo("Expedientes PJN", "Primero haga clic en una causa de la lista.")
+            return
+        it = self.mev_items[int(sel[0])]
+        if not messagebox.askyesno("Descargar", "¿Descargar todos los pasos procesales y adjuntos de\n\n"
+                                                f"{it.get('expediente', '')}\n{it.get('caratula', '')}?"):
+            return
+        destino = self.var_destino.get()
+        Path(destino).mkdir(parents=True, exist_ok=True)
+        self.barra.set(0)
+        self.set_ocupado(True)
+        self.btn_abrir.configure(state="disabled")
+        self.trabajador.ordenes.put(("mev_descargar", it, destino))
+
     def _armar_pie(self, m):
         pie = ctk.CTkFrame(m, fg_color="transparent")
         pie.pack(side="bottom", fill="x", padx=24, pady=(12, 18))
@@ -662,6 +988,8 @@ class App:
         if self.btn_descargar is not None and self.btn_descargar.winfo_exists():
             self.btn_cancelar.configure(state="normal" if si else "disabled")
             self.btn_descargar_otra.configure(state=estado)
+            for b in (self.btn_mev_ingresar, self.btn_mev_buscar, self.btn_mev_descargar):
+                b.configure(state=estado)
 
     def estado(self, texto, error=False):
         if getattr(self, "lbl_estado", None) is not None and self.lbl_estado.winfo_exists():
@@ -850,6 +1178,48 @@ class App:
         self.root.after(150, self._bajar_hasta_resultado)
         self.estado("Si es la causa correcta, apriete «Descargar esta causa».")
 
+    def ev_mev_login_ok(self):
+        if getattr(self, "_mev_cred", None):
+            if self.var_mev_recordar.get():
+                mev_recordar(*self._mev_cred)
+            self.cfg["mev_creado_en"] = self._mev_cred[2]
+            guardar_config(self.cfg)
+        self.set_ocupado(False)
+        self.mev_conectada = True
+        self.mev_login.pack_forget()
+        self.mev_busqueda.pack(fill="x")
+        self._mostrar_recientes_mev()
+        self.estado("Elija el departamento judicial y el juzgado, y busque la causa.")
+        if self.var_mev_jur.get() != "Elija…":
+            self.mev_cargar_organismos()
+
+    def ev_mev_login_error(self, texto):
+        self.set_ocupado(False)
+        self.estado(f"No se pudo ingresar a la MEV: {texto}", error=True)
+
+    def ev_mev_organismos(self, jurisdiccion, organismos):
+        self.set_ocupado(False)
+        self.mev_organismos = organismos
+        nombres = [n for _, n in organismos] or ["(sin juzgados)"]
+        self.menu_mev_org.configure(values=nombres)
+        previo = self.cfg.get("mev_org")
+        self.var_mev_org.set(previo if previo in nombres else nombres[0])
+        self.estado(f"{len(organismos)} juzgados y organismos. Elija uno y busque la causa.")
+
+    def ev_mev_resultados(self, items):
+        self.set_ocupado(False)
+        self._mostrar_mev_items(items, f"{len(items)} causa(s) encontradas" if items
+                                else "No se encontraron causas con esos datos.")
+        self.estado("Elija una causa y apriete «Descargar la causa elegida»." if items
+                    else "Revise el juzgado y el número o la carátula.")
+
+    def ev_mev_bajada(self, item):
+        recientes = [r for r in self.cfg.get("mev_recientes", []) if r.get("nid") != item.get("nid")]
+        recientes.insert(0, {k: item.get(k, "") for k in ("nid", "pid", "expediente", "caratula", "estado",
+                                                           "inicio", "ultimo")})
+        self.cfg["mev_recientes"] = recientes[:40]
+        guardar_config(self.cfg)
+
     def ev_descarga_ok(self, carpeta, docs, errores):
         self.set_ocupado(False)
         self.ultima_carpeta = carpeta
@@ -875,6 +1245,15 @@ class App:
         elif texto == "SesionVencida":
             self.pantalla_ingreso()
             self.estado("La sesión venció. Vuelva a ingresar.", error=True)
+        elif orden.startswith("mev_"):
+            if "MEV venció" in texto and getattr(self, "mev_login", None) is not None:
+                self.mev_conectada = False
+                self.mev_busqueda.pack_forget()
+                self.mev_login.pack(fill="x")
+            if orden == "mev_organismos":
+                self.menu_mev_org.configure(values=["Primero elija el departamento"])
+                self.var_mev_org.set("Primero elija el departamento")
+            self.estado(f"MEV: {texto}", error=True)
         elif orden == "consultar":
             self.estado(f"No se encontró: {texto}", error=True)
         else:

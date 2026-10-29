@@ -8,3 +8,4 @@ __pycache__/
 app/config.json
 app/registro.txt
 app/respaldo/
+dev/

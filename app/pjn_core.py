@@ -1052,6 +1052,7 @@ class _Estado:
         self.filas = datos.get("filas", {})
         self.completo = bool(datos.get("completo", False))
         self._orden = max([f.get("orden", 0) for f in self.filas.values()] + [0])
+        self.encabezado = ["Fecha", "Origen", "Oficina", "Tipo", "Detalle", "A fs.", "Archivo"]
 
     def guardar(self):
         tmp = self.path.with_suffix(".tmp")
@@ -1063,6 +1064,8 @@ class _Estado:
         self._orden += 1
         self.filas[clave] = {"fecha": f["fecha"], "origen": origen, "oficina": f["oficina"], "tipo": f["tipo"],
                              "detalle": f["detalle"], "fojas": f["fojas"], "orden": self._orden}
+        if origen == "adjunto" and f.get("url"):  # enlaces fijos de la MEV: sirven para reintentar después
+            self.filas[clave]["url"] = f["url"]
 
     SIN_PERMISO = "(sin permiso en el PJN)"
 
@@ -1094,7 +1097,7 @@ class _Estado:
         try:
             with open(self.carpeta / "indice.csv", "w", newline="", encoding="utf-8-sig") as fh:
                 w = csv.writer(fh, delimiter=";")
-                w.writerow(["Fecha", "Origen", "Oficina", "Tipo", "Detalle", "A fs.", "Archivo"])
+                w.writerow(self.encabezado)
                 for clave, f in filas:
                     w.writerow([f["fecha"], f["origen"], f["oficina"], f["tipo"], f["detalle"], f["fojas"],
                                 self.archivos.get(clave, "")])
