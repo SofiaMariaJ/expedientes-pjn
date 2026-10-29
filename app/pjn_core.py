@@ -193,11 +193,12 @@ def parsear_expediente(texto):
 # ----------------------------------------------------------------------------- sesión
 
 class PJN:
-    def __init__(self, avisar=None, cancelar=None, visible=False):
+    def __init__(self, avisar=None, cancelar=None, visible=False, pw=None):
         self.avisar = avisar or (lambda texto, actual=None, total=None: print(texto, flush=True))
         self.cancelar = cancelar
         self.visible = visible
-        self._pw = None
+        self._pw = pw  # si viene de afuera (compartido con la MEV), no se apaga al cerrar
+        self._pw_propio = pw is None
         self.browser = None
         self.ctx = None
         self.page = None
@@ -220,7 +221,8 @@ class PJN:
         return browser, ctx, page
 
     def abrir_navegador(self):
-        self._pw = sync_playwright().start()
+        if self._pw is None:
+            self._pw = sync_playwright().start()
         self.browser, self.ctx, self.page = self._lanzar(self.visible)
         self._oculto = None  # navegador invisible guardado mientras se usa uno visible
 
@@ -239,7 +241,7 @@ class PJN:
             except Exception:
                 pass
         try:
-            if self._pw:
+            if self._pw and self._pw_propio:
                 self._pw.stop()
         except Exception:
             pass

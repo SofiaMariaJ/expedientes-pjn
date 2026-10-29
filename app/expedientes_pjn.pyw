@@ -36,7 +36,7 @@ import customtkinter as ctk
 sys.path.insert(0, str(APP_DIR))
 import pjn_core  # noqa: E402
 import mev_core  # noqa: E402
-from playwright.sync_api import TimeoutError as PWTimeout  # noqa: E402
+from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright  # noqa: E402
 
 try:
     import keyring
@@ -187,18 +187,21 @@ class Trabajador(threading.Thread):
         self.mev = None
         self.credenciales = None  # solo en memoria, para reingresar si vence la sesión
         self.credenciales_mev = None
+        self._pw = None  # un solo motor de navegador para el PJN y la MEV
+
+    def _motor(self):
+        if self._pw is None:
+            self._pw = sync_playwright().start()
+        return self._pw
 
     def avisar(self, texto, actual=None, total=None):
         print(texto, flush=True)
         self.eventos.put(("progreso", texto, actual, total))
 
     def _nuevo_pjn(self, visible):
-        if self.mev:  # la MEV usa el mismo motor: se cierra y se vuelve a abrir cuando haga falta
-            self.mev.cerrar()
-            self.mev = None
         if self.pjn:
             self.pjn.cerrar()
-        self.pjn = pjn_core.PJN(avisar=self.avisar, cancelar=self.cancelar, visible=visible)
+        self.pjn = pjn_core.PJN(avisar=self.avisar, cancelar=self.cancelar, visible=visible, pw=self._motor())
         self.pjn.abrir_navegador()
 
     def run(self):
@@ -209,6 +212,11 @@ class Trabajador(threading.Thread):
                     self.mev.cerrar()
                 if self.pjn:
                     self.pjn.cerrar()
+                try:
+                    if self._pw:
+                        self._pw.stop()
+                except Exception:
+                    pass
                 return
             self.cancelar.clear()
             try:
@@ -225,7 +233,7 @@ class Trabajador(threading.Thread):
         if self.mev is None:
             if not self.credenciales_mev:
                 raise mev_core.SesionVencidaMEV()
-            self.mev = mev_core.MEVSesion(self.pjn._pw, avisar=self.avisar, cancelar=self.cancelar)
+            self.mev = mev_core.MEVSesion(self._motor(), avisar=self.avisar, cancelar=self.cancelar)
             self.mev.abrir()
             self.mev.ingresar(*self.credenciales_mev)
         return self.mev
@@ -247,7 +255,7 @@ class Trabajador(threading.Thread):
         self.avisar("Ingresando a la MEV…")
         if self.mev:
             self.mev.cerrar()
-        self.mev = mev_core.MEVSesion(self.pjn._pw, avisar=self.avisar, cancelar=self.cancelar)
+        self.mev = mev_core.MEVSesion(self._motor(), avisar=self.avisar, cancelar=self.cancelar)
         self.mev.abrir()
         try:
             self.mev.ingresar(usuario, clave, creado)
@@ -425,6 +433,7 @@ class App:
         self.btn_ingresar = None
         self.btn_descargar = None
         self.mev_conectada = False
+        self.pjn_conectado = False
 
         root.title(f"Expedientes PJN — versión {VERSION}")
         root.configure(fg_color=C_FONDO)
@@ -438,16 +447,9 @@ class App:
 
         self.marco = ctk.CTkFrame(root, fg_color="transparent")
         self.marco.pack(fill="both", expand=True)
-        self.pantalla_ingreso()
+        self.pantalla_inicio()
         root.protocol("WM_DELETE_WINDOW", self.salir)
         root.after(100, self.procesar_eventos)
-
-        usuario, clave = clave_guardada()
-        if usuario and clave:
-            self.e_usuario.insert(0, usuario)
-            self.e_clave.insert(0, clave)
-            self.var_recordar.set(True)
-            root.after(400, self.ingresar)
 
     def _poner_icono(self):
         try:
@@ -480,7 +482,56 @@ class App:
             w.destroy()
         self.btn_ingresar = None
         self.btn_descargar = None
-        self.mev_conectada = False
+
+    def pantalla_inicio(self):
+        """Primera pantalla: elegir si entra a las causas de Nación (PJN) o de Provincia (MEV)."""
+        self.limpiar()
+        caja = tarjeta(self.marco, corner_radius=18)
+        caja.place(relx=0.5, rely=0.47, anchor="center")
+        interior = ctk.CTkFrame(caja, fg_color="transparent")
+        interior.pack(padx=48, pady=40)
+        logo(interior, 56).pack()
+        ctk.CTkLabel(interior, text="Expedientes PJN", font=fuente(26, "bold"),
+                     text_color=C_TEXTO).pack(pady=(16, 2))
+        ctk.CTkLabel(interior, text="¿Qué causas quiere ver?", font=fuente(15),
+                     text_color=C_SUAVE).pack(pady=(0, 26))
+        opciones = ctk.CTkFrame(interior, fg_color="transparent")
+        opciones.pack()
+        for col, (titulo, detalle, accion) in enumerate([
+                ("Nación", "Poder Judicial de la Nación (PJN)\nSe ingresa con el CUIT", self.elegir_pjn),
+                ("Provincia de Buenos Aires", "Mesa de Entradas Virtual (MEV)\nSe ingresa con el usuario de la MEV",
+                 self.elegir_mev)]):
+            op = ctk.CTkFrame(opciones, fg_color=C_ACENTO_CLARO, corner_radius=14, border_width=1,
+                              border_color="#C9CFEE")
+            op.grid(row=0, column=col, padx=10)
+            ctk.CTkLabel(op, text=titulo, font=fuente(19, "bold"), text_color=C_TEXTO).pack(padx=26, pady=(22, 4))
+            ctk.CTkLabel(op, text=detalle, font=fuente(13), text_color=C_SUAVE, justify="center").pack(padx=26)
+            boton(op, "Entrar", accion, width=220).pack(padx=26, pady=(16, 22))
+        ctk.CTkLabel(interior, text="Una vez adentro puede pasar de una a otra con las pestañas de arriba.",
+                     font=fuente(13), text_color=C_SUAVE).pack(pady=(22, 0))
+
+    def elegir_pjn(self):
+        if self.ocupado:
+            messagebox.showinfo("Expedientes PJN", "Espere a que termine lo que se está haciendo.")
+            return
+        self.pantalla_ingreso()
+        usuario, clave = clave_guardada()
+        if usuario and clave:  # entra sola con los datos recordados
+            self.e_usuario.insert(0, usuario)
+            self.e_clave.insert(0, clave)
+            self.var_recordar.set(True)
+            self.root.after(400, self.ingresar)
+
+    def elegir_mev(self):
+        self.pantalla_principal("Provincia (MEV)")
+
+    def volver_desde_ingreso(self):
+        if self.ocupado:
+            return
+        if self.mev_conectada:
+            self.pantalla_principal("Provincia (MEV)")
+        else:
+            self.pantalla_inicio()
 
     def pantalla_ingreso(self):
         self.limpiar()
@@ -516,6 +567,9 @@ class App:
         ctk.CTkButton(interior, text="Ingresar desde el navegador", command=self.ingresar_manual,
                       fg_color="transparent", hover_color=C_ACENTO_CLARO, text_color=C_ACENTO,
                       font=fuente(13), height=30).pack(pady=(6, 0))
+        ctk.CTkButton(interior, text="Volver", command=self.volver_desde_ingreso,
+                      fg_color="transparent", hover_color=C_ACENTO_CLARO, text_color=C_SUAVE,
+                      font=fuente(13), height=30).pack(pady=(2, 0))
 
         self.e_usuario.bind("<Return>", lambda e: self.e_clave.focus_set())
         self.e_clave.bind("<Return>", lambda e: self.ingresar())
@@ -528,7 +582,7 @@ class App:
         except tk.TclError:
             pass
 
-    def pantalla_principal(self):
+    def pantalla_principal(self, seccion="Mis causas"):
         self.limpiar()
         m = self.marco
 
@@ -539,8 +593,11 @@ class App:
         logo(barra, 38).pack(side="left", padx=(24, 12))
         ctk.CTkLabel(barra, text="Expedientes PJN", font=fuente(19, "bold"),
                      text_color=C_TEXTO).pack(side="left")
-        boton(barra, "Salir de la cuenta", self.cerrar_sesion, principal=False).pack(side="right", padx=24)
-        if self.usuario_actual:
+        if self.pjn_conectado:
+            boton(barra, "Salir del PJN", self.cerrar_sesion, principal=False).pack(side="right", padx=24)
+        else:
+            boton(barra, "Inicio", self.ir_al_inicio, principal=False).pack(side="right", padx=24)
+        if self.pjn_conectado and self.usuario_actual:
             ctk.CTkLabel(barra, text=f"CUIT {self.usuario_actual}", font=fuente(13),
                          text_color=C_SUAVE).pack(side="right")
         ctk.CTkFrame(m, fg_color=C_BORDE, height=1, corner_radius=0).pack(fill="x")
@@ -564,9 +621,12 @@ class App:
         self.sec_mias = self._armar_mias(self.contenedor)
         self.sec_otra = self._armar_consulta(self.contenedor)
         self.sec_mev = self._armar_mev(self.contenedor)
+        self.sec_sin_pjn = self._armar_sin_pjn(self.contenedor)
+        if self.mev_conectada:  # ya estaba adentro de la MEV (por ejemplo, volvió de ingresar al PJN)
+            self._mev_mostrar_busqueda()
 
-        self.selector.set("Mis causas")
-        self._cambiar_seccion("Mis causas")
+        self.selector.set(seccion)
+        self._cambiar_seccion(seccion)
 
     def _ajustar_texto_selector(self):
         # El texto de la opción no elegida va en gris oscuro (la elegida, en blanco).
@@ -578,10 +638,13 @@ class App:
             pass
 
     def _cambiar_seccion(self, valor):
-        for sec in (self.sec_mias, self.sec_otra, self.sec_mev):
+        for sec in (self.sec_mias, self.sec_otra, self.sec_mev, self.sec_sin_pjn):
             sec.pack_forget()
-        {"Mis causas": self.sec_mias, "Consultar cualquier causa": self.sec_otra}.get(
-            valor, self.sec_mev).pack(fill="both", expand=True)
+        if valor != "Provincia (MEV)" and not self.pjn_conectado:
+            self.sec_sin_pjn.pack(fill="both", expand=True)
+        else:
+            {"Mis causas": self.sec_mias, "Consultar cualquier causa": self.sec_otra}.get(
+                valor, self.sec_mev).pack(fill="both", expand=True)
         self._ajustar_texto_selector()
         if valor == "Provincia (MEV)" and not self.mev_conectada and not self.ocupado:
             guardada = mev_guardada()
@@ -593,6 +656,22 @@ class App:
                 self.var_mev_creado.set(self._nombre_creado(guardada[2]))
                 self.var_mev_recordar.set(True)
                 self.mev_ingresar()
+
+    def _armar_sin_pjn(self, padre):
+        sec = tarjeta(padre)
+        centro = ctk.CTkFrame(sec, fg_color="transparent")
+        centro.place(relx=0.5, rely=0.42, anchor="center")
+        ctk.CTkLabel(centro, text="Causas de Nación", font=fuente(20, "bold"), text_color=C_TEXTO).pack()
+        ctk.CTkLabel(centro, text="Para ver sus causas del Poder Judicial de la Nación\n"
+                                  "tiene que ingresar al PJN con su CUIT.",
+                     font=fuente(14), text_color=C_SUAVE, justify="center").pack(pady=(6, 18))
+        boton(centro, "Ingresar al PJN", self.elegir_pjn, width=240).pack()
+        return sec
+
+    def ir_al_inicio(self):
+        if self.ocupado:
+            return
+        self.pantalla_inicio()
 
     def _armar_mias(self, padre):
         sec = tarjeta(padre)
@@ -1117,7 +1196,12 @@ class App:
             self.var_recordar.set(False)
         self.lista = []
         self.usuario_actual = ""
-        self.pantalla_ingreso()
+        self.pjn_conectado = False
+        self.trabajador.credenciales = None
+        if self.mev_conectada:
+            self.pantalla_principal("Provincia (MEV)")
+        else:
+            self.pantalla_inicio()
 
     def salir(self):
         if self.ocupado and not messagebox.askyesno("Salir", "Hay una descarga en curso. ¿Salir igual?"):
@@ -1154,7 +1238,8 @@ class App:
                 olvidar_clave()
         self._credenciales = None
         self.set_ocupado(False)
-        self.pantalla_principal()
+        self.pjn_conectado = True
+        self.pantalla_principal("Mis causas")
         self.listar()
 
     def ev_lista(self, lista):
@@ -1186,6 +1271,9 @@ class App:
             guardar_config(self.cfg)
         self.set_ocupado(False)
         self.mev_conectada = True
+        self._mev_mostrar_busqueda()
+
+    def _mev_mostrar_busqueda(self):
         self.mev_login.pack_forget()
         self.mev_busqueda.pack(fill="x")
         self._mostrar_recientes_mev()
@@ -1243,6 +1331,7 @@ class App:
             self.pantalla_ingreso()
             self.estado(f"No se pudo ingresar: {texto}", error=True)
         elif texto == "SesionVencida":
+            self.pjn_conectado = False
             self.pantalla_ingreso()
             self.estado("La sesión venció. Vuelva a ingresar.", error=True)
         elif orden.startswith("mev_"):

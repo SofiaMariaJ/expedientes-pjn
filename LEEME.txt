@@ -34,7 +34,9 @@ ventana muestra la version.
 USO
 ---
 1. Doble clic en "Expedientes PJN" (en el Escritorio).
-2. Escribir CUIT/CUIL y clave del PJN y apretar "Ingresar".
+   Aparece la pregunta "Que causas quiere ver?": elegir "Nacion" (PJN) o
+   "Provincia de Buenos Aires" (MEV). Despues se pasa de una a otra con las pestanas.
+2. Nacion: escribir CUIT/CUIL y clave del PJN y apretar "Ingresar".
    Si se tilda "Recordar mis datos en esta computadora", la proxima vez entra solo.
    (Los datos quedan guardados en el Administrador de credenciales de Windows.)
 3. Aparece la lista de "Mis expedientes". Se puede escribir en "Buscar" para filtrar
@@ -47,6 +49,11 @@ USO
    escribir numero y ano, apretar "Buscar" y, si es la correcta, "Descargar esta causa".
 5. Al terminar se abre la carpeta con los archivos.
    Por defecto: Documentos\Expedientes PJN\<numero de expediente>
+6. Provincia (MEV): escribir el usuario de la MEV (no es el CUIT), la clave y
+   "Creado en", y apretar "Ingresar a la MEV" (tambien se puede tildar "Recordar").
+   Elegir departamento judicial y juzgado, buscar por numero o caratula, hacer clic
+   en la causa y apretar "Descargar la causa elegida".
+   Se guarda en: Documentos\Expedientes PJN\Provincia (MEV)
 
 
 QUE SE BAJA
