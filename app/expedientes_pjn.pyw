@@ -1299,7 +1299,8 @@ class App:
         self._mostrar_mev_items(items, f"{len(items)} causa(s) encontradas" if items
                                 else "No se encontraron causas con esos datos.")
         self.estado("Elija una causa y apriete «Descargar la causa elegida»." if items
-                    else "Revise el juzgado y el número o la carátula.")
+                    else "La MEV busca solo dentro del juzgado elegido: fíjese que sea el juzgado de la causa. "
+                         "En «Número» alcanza con el número solo (por ejemplo 1847).")
 
     def ev_mev_bajada(self, item):
         recientes = [r for r in self.cfg.get("mev_recientes", []) if r.get("nid") != item.get("nid")]

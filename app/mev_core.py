@@ -233,6 +233,16 @@ class MEVSesion:
                                 if (!o) return false; s.value = o.value; return true; }""", organismo)
         if not ok:
             raise RuntimeError("No encontré ese juzgado en la MEV.")
+        anio = None
+        if modo == "numero":
+            # La MEV busca solo el número ("1847"): si escribieron "AV-1847-2018" o "1847/2018",
+            # se busca 1847 y después se dejan las del año pedido.
+            grupos = re.findall(r"\d+", texto)
+            if not grupos:
+                raise RuntimeError("Escriba el número de expediente (por ejemplo 1847).")
+            texto = str(int(grupos[0]))
+            if len(grupos) > 1 and len(grupos[1]) == 4:
+                anio = grupos[1]
         page.check(f"input[name=radio][value={MODOS[modo]}]")
         page.fill(f"input[name={CAMPO_MODO[modo]}]", texto)
         page.check(f"input[name=TipoCausa][value={ESTADOS.get(estado, 'Am')}]")
@@ -244,7 +254,11 @@ class MEVSesion:
         m = re.search(r"Los resultados exceden el l[ií]mite[^\n]*", cuerpo)
         if m:
             raise RuntimeError("Hay demasiados resultados: escriba más datos (por ejemplo, nombre y apellido).")
-        return page.evaluate(JS_RESULTADOS)
+        res = page.evaluate(JS_RESULTADOS)
+        if anio:
+            del_anio = [r for r in res if re.search(rf"\b{anio}\b", r.get("expediente", ""))]
+            res = del_anio or res
+        return res
 
     # --- descarga
 
